@@ -1,0 +1,766 @@
+import json
+import csv
+import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import tkinter as tk
+from collections import Counter
+import re
+import nltk
+from snowballstemmer import TurkishStemmer
+from nltk import pos_tag
+from collections import defaultdict
+
+nltk.download('stopwords')
+
+turkish_stemmer = TurkishStemmer()
+
+def turkish_stemming(word):
+    return turkish_stemmer.stemWord(word)
+
+class BagliListeElemani:
+    def __init__(self, anahtar, deger):
+        self.anahtar = anahtar
+        self.deger = deger
+        self.sonraki = None
+
+class HashTablosu:
+    def __init__(self, boyut):
+        self.boyut = boyut
+        self.tablo = [None] * boyut
+
+    def hash_fonksiyonu(self, anahtar):       
+        return sum(ord(char) for char in anahtar) % self.boyut
+
+    def ekle(self, anahtar, deger):
+        indeks = self.hash_fonksiyonu(anahtar)
+        if self.tablo[indeks] is None:
+            self.tablo[indeks] = BagliListeElemani(anahtar, deger)
+        else:
+            yeni_eleman = BagliListeElemani(anahtar, deger)
+            yeni_eleman.sonraki = self.tablo[indeks]
+            self.tablo[indeks] = yeni_eleman
+
+    
+    def getir(self, anahtar):
+        indeks = self.hash_fonksiyonu(anahtar)
+        current = self.tablo[indeks]
+        while current is not None:
+            if current.anahtar == anahtar:
+                return current.deger
+            current = current.sonraki
+        raise KeyError(f"{anahtar} bulunamadi.")
+    
+
+class HashTable2:
+    def __init__(self, size):
+        self.size = size
+        self.table = [None] * size
+
+    def hash_function(self, key):
+        return hash(key) % self.size
+
+    def insert(self, key):
+        index = self.hash_function(key)
+        if self.table[index] is None:
+            self.table[index] = [key]
+        else:
+            self.table[index] = [key] + self.table[index]
+
+    def search(self, key):
+        index = self.hash_function(key)
+        if self.table[index] is not None and key in self.table[index]:
+            return True
+        else:
+            return False
+    
+
+def kullanici_olustur(username, name, followers_count, following_count, language, region, tweets, following, followers):
+    return {
+        "username": username,
+        "name": name,
+        "followers_count": followers_count,
+        "following_count": following_count,
+        "language": language,
+        "region": region,
+        "tweets": tweets,
+        "following": following,
+        "followers": followers,
+        "edges": []
+    }
+
+class KullaniciGrafi:
+    def __init__(self):
+        self.graf = nx.Graph()
+
+    def edge_ekle(self, kullanici1, kullanici2):
+        self.graf.add_edge(kullanici1, kullanici2, color="purple")
+    
+   
+    def graf_olustur(self, kullanici_nesneleri):
+        for kullanici in kullanici_nesneleri:
+            username = kullanici["username"]
+            followers = kullanici["followers"]
+            for follower in followers:
+                self.edge_ekle(username, follower)
+                self.graf.nodes[username]["kullanici_nesnesi"] = kullanici
+            
+
+    def graf_cizdir(self):
+        fig, ax = plt.subplots(figsize=(8, 6))
+        pos = nx.spring_layout(self.graf)
+        nx.draw(self.graf, pos, with_labels=True, font_weight='normal',font_size =6,node_size=150, node_color='skyblue', edge_color='gray', ax=ax)
+        plt.show()
+
+
+def get_top_words_all_users(user_data, stopwords_hash_table, top_n):
+    all_tweets_text = ''
+
+    for user in user_data:
+        all_tweets_text += ' '.join(user["tweets"]) + ' '
+
+    words = re.findall(r'\b\w+\b', all_tweets_text.lower())
+
+    word_counts = Counter(words)
+
+    for stopword_list in stopwords_hash_table.table:
+        if stopword_list is not None:
+            for stopword in stopword_list:
+                if stopword in word_counts:
+                    del word_counts[stopword]
+
+    stemmed_words = [turkish_stemmer.stemWord(word) for word in word_counts.keys()]
+
+    tagged_words = pos_tag(stemmed_words)
+
+    nouns = [word for word, pos in tagged_words if pos == 'NN']
+
+    noun_counts = Counter(nouns)
+
+    top_nouns = noun_counts.most_common(top_n)
+
+    return top_nouns
+  
+def yeni_hash_tablosu_olustur(kullanici_verileri, stopwords_hash_table):
+    yeni_hash_tablosu = defaultdict(list)
+
+    stopwords_list = []
+    for stopword_list in stopwords_hash_table.table:
+        if stopword_list is not None:
+            stopwords_list.extend(stopword_list)
+
+    for kullanici in kullanici_verileri:
+        tweets = kullanici["tweets"]
+
+        for tweet in tweets:
+            words = re.findall(r'\b\w+\b', tweet.lower())
+            
+            filtered_words = [word for word in words if len(word) > 2 and word not in stopwords_list]
+
+            stemmed_words = [turkish_stemming(word) for word in filtered_words]
+
+            tagged_words = pos_tag(stemmed_words)
+
+            nouns = [word for word, pos in tagged_words if pos == 'NN']
+
+            for stemmed_word in set(nouns): 
+                yeni_hash_tablosu[stemmed_word].append(kullanici["username"])
+
+    return yeni_hash_tablosu
+
+def get_top_words_for_user(user_data, username, stopwords_hash_table, top_n):
+
+    user = next((user for user in user_data if user["username"] == username), None)
+
+    if user is not None:
+
+        user_tweets_text = ' '.join(user["tweets"])
+
+        words = re.findall(r'\b\w+\b', user_tweets_text.lower())
+
+        word_counts = Counter(words)
+
+        for stopword_list in stopwords_hash_table.table:
+            if stopword_list is not None:
+                for stopword in stopword_list:
+                    if stopword in word_counts:
+                        del word_counts[stopword]
+
+        stemmed_words = [turkish_stemmer.stemWord(word) for word in word_counts.keys()]
+
+        tagged_words = pos_tag(stemmed_words)
+
+        nouns = [word for word, pos in tagged_words if pos == 'NN']
+
+        noun_counts = Counter(nouns)
+
+        top_nouns = noun_counts.most_common(top_n)
+
+        return top_nouns
+    else:
+        raise ValueError(f"User '{username}' not found in the user data.")
+
+  
+def ortak_nouns(top_nouns_user1, top_nouns_user2):
+    user1_nouns = set([noun for noun, count in top_nouns_user1])
+    user2_nouns = set([noun for noun, count in top_nouns_user2])
+
+    ortak_nounlar = user1_nouns.intersection(user2_nouns)
+    return ortak_nounlar
+
+def get_followers_for_user(user_data, username):
+    user = next((user for user in user_data if user["username"] == username), None)
+
+    if user is not None:
+        return user["followers"]
+    else:
+        raise ValueError(f"User '{username}' not found in the user data.")
+    
+def get_followings_for_user(user_data, username):
+    user = next((user for user in user_data if user["username"] == username), None)
+
+    if user is not None:
+        return user["following"]
+    else:
+        raise ValueError(f"User '{username}' not found in the user data.")
+
+
+def ortak_takipciler(user_data, username1, username2):
+    followers1 = set(get_followers_for_user(user_data, username1))
+    
+    followers2 = set(get_followers_for_user(user_data, username2))
+    
+    ortak_takipciler = followers1.intersection(followers2)
+    
+    return ortak_takipciler
+
+def ortak_takip(user_data, username1, username2):
+    followers1 = set(get_followings_for_user(user_data, username1))
+    
+    followers2 = set(get_followings_for_user(user_data, username2))
+
+    ortak_takipciler = followers1.intersection(followers2)
+    
+    return ortak_takipciler
+
+def get_top_words_for_region(user_data, region, stopwords_hash_table, top_n):
+    region_tweets = ''
+
+    for user in user_data:
+        if user["region"] == region:
+            region_tweets += ' '.join(user["tweets"]) + ' '
+
+
+    words = re.findall(r'\b\w+\b', region_tweets.lower())
+
+
+    word_counts = Counter(words)
+
+    for stopword_list in stopwords_hash_table.table:
+        if stopword_list is not None:
+            for stopword in stopword_list:
+                if stopword in word_counts:
+                    del word_counts[stopword]
+
+    stemmed_words = [turkish_stemmer.stemWord(word) for word in word_counts.keys()]
+
+    tagged_words = pos_tag(stemmed_words)
+
+    nouns = [word for word, pos in tagged_words if pos == 'NN']
+
+    noun_counts = Counter(nouns)
+
+    top_nouns = noun_counts.most_common(top_n)
+
+    return top_nouns
+
+
+def get_top_words_for_language(user_data, language, stopwords_hash_table, top_n):
+    language_tweets = ''
+
+    for user in user_data:
+        if user["language"] == language:
+            language_tweets += ' '.join(user["tweets"]) + ' '
+
+    words = re.findall(r'\b\w+\b', language_tweets.lower())
+
+    word_counts = Counter(words)
+
+    for stopword_list in stopwords_hash_table.table:
+        if stopword_list is not None:
+            for stopword in stopword_list:
+                if stopword in word_counts:
+                    del word_counts[stopword]
+
+    stemmed_words = [turkish_stemmer.stemWord(word) for word in word_counts.keys()]
+
+    tagged_words = pos_tag(stemmed_words)
+
+    nouns = [word for word, pos in tagged_words if pos == 'NN']
+
+    noun_counts = Counter(nouns)
+
+    top_nouns = noun_counts.most_common(top_n)
+
+    return top_nouns
+
+class KullaniciGrafi2:
+    def __init__(self):
+        self.graf = nx.Graph()
+
+    def kelime_kenar_ekle(self, kelime1, kelime2, frekans):
+        self.graf.add_edge(kelime1, kelime2, weight=frekans)
+
+    def graf_olustur(self, top_words):
+        for kelime1, count1 in top_words:
+            for kelime2, count2 in top_words:
+                if kelime1 != kelime2:
+                    weight = min(count1, count2)
+                    self.kelime_kenar_ekle(kelime1, kelime2, weight)
+
+
+    def graf_cizdir(self):
+        fig, ax = plt.subplots(figsize=(10, 8))
+        pos = nx.spring_layout(self.graf)
+        edges, weights = zip(*nx.get_edge_attributes(self.graf, 'weight').items())
+        nx.draw(self.graf, pos, with_labels=True, font_weight='normal',font_size=6, node_size=150, edgelist=edges, edge_color=weights, edge_cmap=plt.cm.Blues, ax=ax)
+        plt.show()
+
+class KullaniciGrafi3:
+    def __init__(self):
+        self.graf = nx.Graph()
+
+    def kelime_kenar_ekle(self, kelime1, kelime2):
+        self.graf.add_edge(kelime1, kelime2)
+
+    def graf_olustur(self,username, top_words, username2,top_words2):
+        for kelime1,count1 in top_words:
+            self.kelime_kenar_ekle(username,kelime1)
+        for kelime2,count2 in top_words2:
+            self.kelime_kenar_ekle(username2,kelime2)
+                
+    def graf_cizdir(self):
+        fig, ax = plt.subplots(figsize=(10, 8))
+        pos = nx.spring_layout(self.graf) 
+        nx.draw(self.graf, pos, with_labels=True, font_weight='normal',font_size=6, node_size=150, node_color="skyblue", edge_color="gray",ax=ax)
+        plt.show()
+
+
+class KullaniciGrafi4:
+    def __init__(self):
+        self.graf = nx.Graph()
+
+    def kelime_kenar_ekle(self, kelime1, kelime2, weight):
+        self.graf.add_edge(kelime1, kelime2, weight=weight)
+
+    def graf_olustur(self, username, top_words, username2, top_words2):
+        for kelime1, count1 in top_words:
+            self.kelime_kenar_ekle(username, kelime1, count1)
+
+        for kelime2, count2 in top_words2:
+            self.kelime_kenar_ekle(username2, kelime2, count2)
+
+        weighted_graph = self.graf.copy()
+
+        shortest_paths = dict(nx.all_pairs_dijkstra_path_length(weighted_graph))
+
+        for u, v in weighted_graph.edges():
+            weighted_graph[u][v]['weight'] = shortest_paths[u][v]
+
+        self.graf = weighted_graph
+
+    def graf_cizdir(self):
+        fig, ax = plt.subplots(figsize=(10, 8))
+        pos = nx.spring_layout(self.graf)
+        edges, weights = zip(*nx.get_edge_attributes(self.graf, 'weight').items())
+        nx.draw(
+            self.graf,
+            pos,
+            with_labels=True,
+            font_weight='normal',
+            font_size=6,
+            node_size=150,
+            edgelist=edges,
+            edge_color=weights,
+            edge_cmap=plt.cm.Blues,
+            ax=ax,
+        )
+        plt.show()
+
+
+
+def main():
+    global hash_tablosu, hash_table
+    with open("twitter_data.json", "r", encoding="utf-8") as dosya:
+        kullanici_verileri = json.load(dosya) 
+
+    hash_table = HashTable2(size=1000)
+
+    with open("stopwords.json", "r") as file:
+        stopwords_data = json.load(file)
+
+        for stopword in stopwords_data["stopwords"]:
+            hash_table.insert(stopword)
+
+    hash_tablosu = HashTablosu(len(kullanici_verileri))
+
+    for kullanici in kullanici_verileri:
+        username = kullanici["username"]
+        kullanici_nesnesi = kullanici_olustur(
+            kullanici["username"],
+            kullanici["name"],
+            kullanici["followers_count"],
+            kullanici["following_count"],
+            kullanici["language"],
+            kullanici["region"],
+            kullanici["tweets"],
+            kullanici["following"],
+            kullanici["followers"]
+        )
+        hash_tablosu.ekle(username, kullanici_nesnesi)
+
+    """
+    ara_username = "atakan.kocoglu"
+    bulunan_kullanici = hash_tablosu.getir(ara_username)
+    print(f"{ara_username} kullanicisi bulundu: {bulunan_kullanici}")"""
+
+    with open("stopwords.json", "r") as file:
+        stopwords_data = json.load(file)
+    
+
+    aranan_kelime = "ama"  
+    if hash_table.search(aranan_kelime):
+        print(f"{aranan_kelime} hash tablosunda bulunuyor.")
+    else:
+        print(f"{aranan_kelime} hash tablosunda bulunmuyor.")
+    
+    top_n = 30
+    top_nouns_without_stopwords = get_top_words_all_users(kullanici_verileri, hash_table, top_n)
+    
+    
+    yeni_hash_tablosu = yeni_hash_tablosu_olustur(kullanici_verileri, hash_table)
+    x = 0
+    with open('output.txt', mode='w') as wrt:
+
+        print(f"Tüm kullanıcılarda en yüksek frekanslı {top_n} kelime (stopwords çıkarıldı):")
+        wrt.write(f"Tüm kullanıcılarda en yüksek frekanslı {top_n} kelime (stopwords çıkarıldı):")
+        wrt.write("\n")
+        for noun, count in top_nouns_without_stopwords:
+            print(f"{noun}: {count}")
+            wrt.write(f"{noun}: {count}")
+            wrt.write("\n")
+        wrt.write("\n")
+        for word, count in top_nouns_without_stopwords:
+            printed_usernames = set()
+            if word in yeni_hash_tablosu:
+                print(f"{word},{count}")
+                wrt.write(f"{word},{count}")
+                wrt.write("\n")
+                for username in yeni_hash_tablosu[word]:
+                    if username in printed_usernames:
+                        x += 1
+                    if username not in printed_usernames:
+                        if len(printed_usernames) != 0:
+                            print(f"{x}")
+                            wrt.write(f"{x}")
+                            wrt.write("\n")
+                        print(username)
+                        wrt.write(username)
+                        wrt.write(",") 
+                        printed_usernames.add(username)
+                        x=1
+                        
+                if x!= 0:
+                    print(f"{x}")
+                    wrt.write(f"{x}")
+                    wrt.write("\n")
+                              
+            else:
+                print(f"{word} kelimesini kullanan kullanıcı bulunamadı.")
+
+            printed_usernames.clear()
+            
+
+            username1 = "burcu06"
+            top_nouns_for_user = get_top_words_for_user(kullanici_verileri, username1, hash_table, top_n=10)
+
+        wrt.write("\n")
+        print(f"{username1}'s top 10 nouns:")
+        wrt.write(f"{username1}'s top 10 nouns:")
+        wrt.write("\n")
+        for noun, count in top_nouns_for_user:
+            print(f"{noun}: {count}")
+            wrt.write(f"{noun}: {count}")
+            wrt.write("\n")
+        
+        username2 = "eakay"
+        top_nouns_for_user2 = get_top_words_for_user(kullanici_verileri, username2, hash_table, top_n=10)
+
+        wrt.write("\n")
+        print(f"{username2}'s top 10 nouns:")
+        wrt.write(f"{username2}'s top 10 nouns:")
+        wrt.write("\n")
+        for noun, count in top_nouns_for_user2:
+            print(f"{noun}: {count}")
+            wrt.write(f"{noun}: {count}")
+            wrt.write("\n")
+
+        top_nouns_for_user = get_top_words_for_user(kullanici_verileri, username1, hash_table, top_n=10)
+        top_nouns_for_user2 = get_top_words_for_user(kullanici_verileri, username2, hash_table, top_n=10)
+
+        ortak_nounlar = ortak_nouns(top_nouns_for_user, top_nouns_for_user2)
+
+        print(f"\nOrtak İlgi Alanları:")
+        wrt.write(f"\nOrtak İlgi Alanları:")
+        wrt.write("\n")
+        for noun in ortak_nounlar:
+            print(noun)
+            wrt.write(noun)
+            wrt.write("\n")
+        print(f"\nToplam Ortak İlgi Alan Sayısı: {len(ortak_nounlar)}")
+        wrt.write(f"\nToplam Ortak İlgi Alan Sayısı: {len(ortak_nounlar)}")
+        wrt.write("\n")
+
+        x = (len(ortak_nounlar)/10)*100
+        print(f"İlgi alanı benzerlik yüzdesi= %{x}")
+        wrt.write(f"İlgi alanı benzerlik yüzdesi= %{x}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        followers_of_user = get_followers_for_user(kullanici_verileri, username1)
+        print(f"Followers of {username1}: {followers_of_user}")
+        wrt.write(f"Followers of {username1}: {followers_of_user}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+        followers_of_user2 = get_followers_for_user(kullanici_verileri, username2)
+        print(f"Followers of {username2}: {followers_of_user2}")
+        wrt.write(f"Followers of {username2}: {followers_of_user2}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        ortak_takipciler_set = ortak_takipciler(kullanici_verileri, username1, username2)
+
+        print(f"{username1} ve {username2} kullanıcılarının ortak takipçileri:")
+        wrt.write(f"{username1} ve {username2} kullanıcılarının ortak takipçileri:")
+        wrt.write("\n")
+        for takipci in ortak_takipciler_set:
+            print(takipci)
+            wrt.write(takipci)
+            wrt.write("\n")
+        if len(ortak_takipciler_set) == 0:
+            print("Bu iki kullanıcı için ortak takipçi bulunmamaktadır.")
+            wrt.write("Bu iki kullanıcı için ortak takipçi bulunmamaktadır.")
+            wrt.write("\n")
+        y=0
+        if(len(followers_of_user)<=len(followers_of_user2)):
+            y = (len(ortak_takipciler_set)/len(followers_of_user))*100
+        else:
+            y = (len(ortak_takipciler_set)/len(followers_of_user2))*100
+        print("\n")
+        wrt.write("\n")
+        print(f"Takipçi benzerlik yüzdesi= %{y:.3f}")
+        wrt.write(f"Takipçi benzerlik yüzdesi= %{y:.3f}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        followings_of_user = get_followings_for_user(kullanici_verileri, username1)
+        print(f"Followings of {username1}: {followings_of_user}")
+        wrt.write(f"Followings of {username1}: {followings_of_user}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+        followings_of_user2 = get_followers_for_user(kullanici_verileri, username2)
+        print(f"Followings of {username2}: {followings_of_user2}")
+        wrt.write(f"Followings of {username2}: {followings_of_user2}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        ortak_takip_set = ortak_takip(kullanici_verileri, username1, username2)
+
+        print(f"{username1} ve {username2} kullanıcılarının ortak takip ettikleri:")
+        wrt.write(f"{username1} ve {username2} kullanıcılarının ortak takip ettikleri:")
+        wrt.write("\n")
+        for takip in ortak_takip_set:
+            print(takip)
+            wrt.write(takip)
+            wrt.write("\n")
+        if len(ortak_takip_set) == 0:
+            print("Bu iki kullanıcı için ortak takip bulunmamaktadır.")
+            wrt.write("Bu iki kullanıcı için ortak takip bulunmamaktadır.")
+            wrt.write("\n")
+        z=0
+        if(len(followings_of_user)<=len(followings_of_user2)):
+            z = (len(ortak_takip_set)/len(followings_of_user))*100
+        else:
+            z = (len(ortak_takip_set)/len(followings_of_user2))*100
+        print("\n")
+        wrt.write("\n")
+        print(f"Takip benzerlik yüzdesi= %{z:.3f}")
+        wrt.write(f"Takip benzerlik yüzdesi= %{z:.3f}")
+        wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        region = "LS" 
+        top_nouns_for_region = get_top_words_for_region(kullanici_verileri, region, hash_table, top_n=20)
+
+        print(f"Top nouns for {region} region:")
+        wrt.write(f"Top nouns for {region} region:")
+        wrt.write("\n")
+        for noun, count in top_nouns_for_region:
+            print(f"{noun}: {count}")
+            wrt.write(f"{noun}: {count}")
+            wrt.write("\n")
+        print("\n")
+        wrt.write("\n")
+
+        language = "yi" 
+        top_nouns_for_language = get_top_words_for_language(kullanici_verileri, language, hash_table, top_n=20)
+
+        print(f"Top nouns for {language} language:")
+        wrt.write(f"Top nouns for {language} language:")
+        wrt.write("\n")
+        for noun, count in top_nouns_for_language:
+            print(f"{noun}: {count}")
+            wrt.write(f"{noun}: {count}")
+            wrt.write("\n")
+
+
+        """kullanici_grafi = KullaniciGrafi()
+        kullanici_grafi.graf_olustur(kullanici_verileri)
+        kullanici_grafi.graf_cizdir()"""
+
+        kullanici_grafi = KullaniciGrafi2()
+        kullanici_grafi.graf_olustur(top_nouns_without_stopwords)
+        kullanici_grafi.graf_cizdir()
+
+        kullanici_grafi = KullaniciGrafi3()
+        kullanici_grafi.graf_olustur(username1,top_nouns_for_user,username2,top_nouns_for_user2)
+        kullanici_grafi.graf_cizdir()
+
+        kullanici_grafi = KullaniciGrafi4()
+        kullanici_grafi.graf_olustur(username1, top_nouns_for_user, username2, top_nouns_for_user2)
+        kullanici_grafi.graf_cizdir()
+
+
+if __name__ == "__main__":
+    main()
+
+
+import json
+import networkx as nx
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import tkinter as tk
+
+
+class HashTablosu:
+    def __init__(self, boyut):
+        self.boyut = boyut
+        self.tablo = [None] * boyut
+
+    def hash_fonksiyonu(self, anahtar):
+       
+        return sum(ord(char) for char in anahtar) % self.boyut
+
+    def ekle(self, anahtar, deger):
+        indeks = self.hash_fonksiyonu(anahtar)
+        if self.tablo[indeks] is None:
+            self.tablo[indeks] = []
+        self.tablo[indeks].append((anahtar, deger))
+
+    
+    def getir(self, anahtar):
+        indeks = self.hash_fonksiyonu(anahtar)
+        if self.tablo[indeks] is not None:
+            for tup in self.tablo[indeks]:
+                if tup[0] == anahtar:
+                    return tup[1]
+        raise KeyError(f"{anahtar} bulunamadi.") 
+  
+    
+
+def kullanici_olustur(username, name, followers_count, following_count, language, region, tweets, following, followers):
+    return {
+        "username": username,
+        "name": name,
+        "followers_count": followers_count,
+        "following_count": following_count,
+        "language": language,
+        "region": region,
+        "tweets": tweets,
+        "following": following,
+        "followers": followers,
+        "edges": []
+    }
+
+class KullaniciGrafi:
+    def __init__(self):
+        self.graf = nx.Graph()
+
+    def edge_ekle(self, kullanici1, kullanici2):
+        self.graf.add_edge(kullanici1, kullanici2)
+
+    def graf_olustur(self, kullanici_nesneleri):
+        for kullanici in kullanici_nesneleri:
+            username = kullanici["username"]
+            followers = kullanici["followers"]
+            for follower in followers:
+                self.edge_ekle(username, follower)
+                self.graf.nodes[username]["kullanici_nesnesi"] = kullanici
+              
+
+    def graf_cizdir(self):
+
+        pos = nx.spring_layout(self.graf)
+        nx.draw(self.graf, pos, with_labels=True, font_weight='normal', font_size=6, node_color='skyblue',
+                edge_color="gray", node_size=200)
+
+        # Show the plot using Matplotlib
+        plt.show()
+       
+        
+
+
+def main():
+    # JSON verisini dosyadan okuma
+    with open("twitter_data.json", "r", encoding="utf-8") as dosya:
+        kullanici_verileri = json.load(dosya)
+
+    # Kullanıcı nesnelerini oluştur
+    kullanici_nesneleri = []
+    for kullanici in kullanici_verileri:
+        kullanici_nesnesi = kullanici_olustur(
+            kullanici["username"],
+            kullanici["name"],
+            kullanici["followers_count"],
+            kullanici["following_count"],
+            kullanici["language"],
+            kullanici["region"],
+            kullanici["tweets"],
+            kullanici["following"],
+            kullanici["followers"]
+        )
+        kullanici_nesneleri.append(kullanici_nesnesi)
+
+    # Hash tablosu oluştur
+    hash_tablosu = HashTablosu(len(kullanici_nesneleri))
+
+    # Kullanıcıları hash tablosuna ekle
+    for kullanici_nesnesi in kullanici_nesneleri:
+        username = kullanici_nesnesi.get("username", "")
+        hash_tablosu.ekle(username, kullanici_nesnesi)
+    
+    kullanici_grafi = KullaniciGrafi()
+    kullanici_grafi.graf_olustur(kullanici_nesneleri)
+
+    # Grafı çizdir
+    kullanici_grafi.graf_cizdir()
+
+if __name__ == "__main__":
+    main()
